@@ -1,0 +1,504 @@
+﻿МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ
+ХАРКІВСЬКИЙ НАЦІОНАЛЬНИЙ УНІВЕРСИТЕТ РАДІОЕЛЕКТРОНІКИ КАФЕДРА ПРОГРАМНОЇ ІНЖЕНЕРІЇ
+
+
+
+
+
+
+ЗВІТ З ЛАБОРАТОРНОЇ РОБОТИ №2
+Дисципліна: Архітектура програмного забезпечення
+
+
+
+
+
+Звіт склав:                                                                                                     Перевірив:
+cт. гр. ПЗПІ-23-1                                                                                            Дашенко Дмитро
+Абдулаєв Тімур Саідмухамедович                                                           Сергійович
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Харків – 2026
+     1. Мета роботи
+     Ознайомитися з процесом розробки клієнтської частини програмної системи для мобільних платформ. Оволодіти навичками проєктування архітектури мобільного застосунку, реалізації інтерфейсу користувача, налаштування мережевої взаємодії з REST API серверної частини та побудови UML-діаграм для документування прийнятих інженерних рішень.
+     2. Завдання
+     Розробити мобільний програмний застосунок мовою Kotlin для ОС Android. Застосунок повинен бути частиною системи ClimaFlow та взаємодіяти з серверною частиною. Скласти звіт, що містить опис прийнятих інженерних рішень, будову застосунку, опис взаємодії з іншими частинами системи. Розробити UML діаграми: прецедентів (Use Case), компонент (Component), пакетів (Package) та діяльності (Activity).
+     3. Опис виконаної роботи
+     3.1. Текстовий опис інженерних рішень
+     Для розробки мобільного застосунку системи ClimaFlow було обрано платформу Android та сучасну мову програмування Kotlin. Застосунок орієнтований на рядових співробітників офісу (Employee) та виконує роль інформаційного табло з можливістю зворотного зв'язку.
+     Основні інженерні рішення:
+1. Архітектурний патерн MVVM (Model-View-ViewModel): Використано для чіткого розділення бізнес-логіки (ViewModel), даних (Model) та інтерфейсу користувача (View). Це забезпечує легке тестування та запобігає втраті даних при повороті екрана пристрою.
+2. UI Фреймворк Jetpack Compose: Замість застарілого XML-верстання використано сучасний декларативний підхід. Інтерфейс будується за допомогою Kotlin-функцій з використанням компонентів Material Design 3 (картки, кнопки, Snackbar для сповіщень).
+3. Мережева взаємодія (Retrofit2 + Gson): Для комунікації з ASP.NET Core REST API використано бібліотеку Retrofit. Вона дозволяє описати HTTP-запити (GET, POST) через інтерфейси Kotlin, а конвертер Gson автоматично перетворює JSON-відповіді у Data-класи (DTO).
+4. Асинхронність (Coroutines & Flow): Мережеві запити виконуються у фонових потоках за допомогою корутин (viewModelScope.launch). Для передачі стану на UI використовуються реактивні потоки StateFlow (для даних клімату) та SharedFlow (для одноразових подій, таких як спливаючі повідомлення про успішний відгук).
+     3.2. Будова мобільного застосунку
+     Структура проєкту розділена на логічні пакети для забезпечення чистоти коду:
+   — data.models містить Data-класи (Device, Location, SensorReading, FeedbackDto, MyRoomResponse), які є точним відображенням DTO з серверної частини;
+   — data.network — містить інтерфейс ClimaFlowApi з маршрутами до ендпоінтів сервера та об'єкт NetworkClient для ініціалізації Retrofit;
+   — ui містить клас MainViewModel, який інкапсулює логіку періодичного опитування сервера (Polling) та відправки відгуків користувачів;
+   — MainActivity.kt — точка входу застосунку. Містить Compose-функції (DashboardScreen, MetricCard), які підписуються на uiState з ViewModel і автоматично перемальовують екран при зміні даних.
+Нижче наведені прикладу коду з вказаних файлів:
+      package com.example.climaflow.data.models
+      import com.google.gson.annotations.SerializedName
+      
+      data class Location(
+          val id: Int,
+          val name: String
+      )
+      
+      data class Device(
+          val id: Int,
+          val name: String,
+          val macAddress: String,
+          val isActive: Boolean,
+          val location: Location?
+      )
+      
+      data class SensorReading(
+          val id: Int,
+          val temperature: Double,
+          val humidity: Double,
+          @SerializedName("co2Level") val co2Level: Double,
+          val timestamp: String
+      )
+      
+      data class FeedbackDto(
+          val deviceId: Int,
+          val feedbackType: String
+      )
+      
+      data class MyRoomResponse(
+          val locationName: String,
+          val deviceId: Int,
+          val deviceName: String
+      )
+     Цей файл (Models.kt) містить набір Kotlin Data-класів (Location, Device, SensorReading, FeedbackDto, MyRoomResponse), які виступають у ролі об'єктів передачі даних (DTO). Вони є точним відображенням сутностей із серверної частини (ASP.NET Core).
+     Завдяки використанню бібліотеки Gson, поля цих класів автоматично мапляться з JSON-відповідей сервера. Для полів, назви яких у JSON відрізняються від стилю Kotlin (наприклад, co2Level), застосовано анотацію @SerializedName. Використання data-класів забезпечує імутабельність (незмінність) даних та автоматичну генерацію методів equals(), hashCode() і copy().
+      package com.example.climaflow.data.network
+      
+      import com.example.climaflow.data.models.Device
+      import com.example.climaflow.data.models.FeedbackDto
+      import com.example.climaflow.data.models.SensorReading
+      import com.example.climaflow.data.models.MyRoomResponse
+      import retrofit2.Retrofit
+      import retrofit2.converter.gson.GsonConverterFactory
+      import retrofit2.http.Body
+      import retrofit2.http.GET
+      import retrofit2.http.POST
+      import retrofit2.http.Path
+      
+      interface ClimaFlowApi {
+          @GET("api/Devices")
+          suspend fun getDevices(): List<Device>
+          
+          @GET("api/Readings/history/{deviceId}")
+          suspend fun getDeviceHistory(@Path("deviceId") deviceId: Int): List<SensorReading>
+          
+          @POST("api/Feedback")
+          suspend fun sendFeedback(@Body feedback: FeedbackDto)
+      
+          @GET("api/Users/{userId}/my-room")
+          suspend fun getMyRoom(@Path("userId") userId: Int): MyRoomResponse
+      }
+      
+      object NetworkClient {
+          private const val BASE_URL = "http://10.0.2.2:5271/"
+      
+          val api: ClimaFlowApi by lazy {
+              Retrofit.Builder()
+                  .baseUrl(BASE_URL)
+                  .addConverterFactory(GsonConverterFactory.create())
+                  .build()
+                  .create(ClimaFlowApi::class.java)
+          }
+      }
+     ClimaFlowApi є інтерфейсом, у якому за допомогою спеціальних анотацій (@GET, @POST, @Path, @Body) описано ендпоінти REST API сервера. Усі функції позначені модифікатором suspend, що дозволяє викликати їх асинхронно у фонових потоках (Coroutines), не блокуючи головний потік інтерфейсу (UI Thread).
+      package com.example.climaflow.ui
+      
+      import androidx.lifecycle.ViewModel
+      import androidx.lifecycle.viewModelScope
+      import com.example.climaflow.data.models.Device
+      import com.example.climaflow.data.models.FeedbackDto
+      import com.example.climaflow.data.models.SensorReading
+      import com.example.climaflow.data.models.MyRoomResponse
+      import com.example.climaflow.data.network.NetworkClient
+      import kotlinx.coroutines.delay
+      import kotlinx.coroutines.flow.MutableSharedFlow
+      import kotlinx.coroutines.flow.MutableStateFlow
+      import kotlinx.coroutines.flow.SharedFlow
+      import kotlinx.coroutines.flow.StateFlow
+      import kotlinx.coroutines.flow.asSharedFlow
+      import kotlinx.coroutines.launch
+      
+      class MainViewModel : ViewModel() {
+      
+          private val _uiState = MutableStateFlow<UiState>(UiState.Loading)
+          val uiState: StateFlow<UiState> = _uiState
+      
+          private val _snackbarMessage = MutableSharedFlow<String>()
+          val snackbarMessage: SharedFlow<String> = _snackbarMessage.asSharedFlow()
+      
+          private var currentDeviceId: Int? = null
+      
+          init {
+              fetchData()
+          }
+      
+          private val CURRENT_USER_ID = 1
+      
+          private fun fetchData() {
+              viewModelScope.launch {
+                  while (true) {
+                      try {
+                          val myRoom = NetworkClient.api.getMyRoom(CURRENT_USER_ID)
+                          currentDeviceId = myRoom.deviceId
+      
+                          val history = NetworkClient.api.getDeviceHistory(myRoom.deviceId)
+                          val latestReading = history.firstOrNull()
+      
+                          if (latestReading != null) {
+                              _uiState.value = UiState.Success(
+                                  locationName = myRoom.locationName,
+                                  reading = latestReading
+                              )
+                          } else {
+                              _uiState.value = UiState.Error("Очікування даних від сенсорів...")
+                          }
+                      } catch (e: Exception) {
+                          println("Помилка: ${e.message}")
+                          if (e.message?.contains("404") == true) {
+                              _uiState.value = UiState.Error("Вас не призначено до жодної кімнати, або в кімнаті немає сенсора.")
+                          }
+                      }
+                      delay(5000)
+                  }
+              }
+          }
+      
+          fun sendFeedback(type: String) {
+              viewModelScope.launch {
+                  try {
+                      currentDeviceId?.let { id ->
+                          NetworkClient.api.sendFeedback(FeedbackDto(id, type))
+                          _snackbarMessage.emit("Дякуємо! Ваш відгук успішно враховано 💙")
+                      }
+                  } catch (e: Exception) {
+                      _snackbarMessage.emit("Помилка з'єднання з сервером 😔")
+                  }
+              }
+          }
+      }
+      
+      sealed class UiState {
+          object Loading : UiState()
+          data class Success(val locationName: String, val reading: SensorReading) : UiState()
+          data class Error(val message: String) : UiState()
+      }
+     Даний клас (MainViewModel.kt) успадковується від ViewModel і відповідає за бізнес-логіку та управління станом екрану. Логіка побудована на реактивних потоках Kotlin Flow:
+1. StateFlow (_uiState) зберігає поточний стан екрану у вигляді sealed-класу (Loading, Success з даними мікроклімату, або Error). Це гарантує, що при перевороті екрана дані не зникнуть.
+2. SharedFlow (_snackbarMessage) використовується для обробки одноразових подій, таких як показ спливаючого повідомлення після успішного відправлення відгуку користувачем.
+     У блоці init запускається корутина (viewModelScope.launch), що містить нескінченний цикл while(true). Кожні 5 секунд (метод delay) ViewModel асинхронно опитує сервер про стан прив'язаної кімнати та оновлює uiState.
+      package com.example.climaflow
+      
+      import android.os.Bundle
+      import androidx.activity.ComponentActivity
+      import androidx.activity.compose.setContent
+      import androidx.compose.animation.AnimatedVisibility
+      import androidx.compose.foundation.background
+      import androidx.compose.foundation.layout.*
+      import androidx.compose.foundation.shape.RoundedCornerShape
+      import androidx.compose.material.icons.Icons
+      import androidx.compose.material.icons.filled.Warning
+      import androidx.compose.material3.*
+      import androidx.compose.runtime.*
+      import androidx.compose.ui.Alignment
+      import androidx.compose.ui.Modifier
+      import androidx.compose.ui.graphics.Color
+      import androidx.compose.ui.text.font.FontWeight
+      import androidx.compose.ui.text.style.TextAlign
+      import androidx.compose.ui.unit.dp
+      import androidx.compose.ui.unit.sp
+      import androidx.lifecycle.viewmodel.compose.viewModel
+      import com.example.climaflow.ui.MainViewModel
+      import com.example.climaflow.ui.UiState
+      import kotlinx.coroutines.flow.collectLatest
+      
+      class MainActivity : ComponentActivity() {
+          override fun onCreate(savedInstanceState: Bundle?) {
+              super.onCreate(savedInstanceState)
+              setContent {
+                  MaterialTheme {
+                      ClimaFlowApp()
+                  }
+              }
+          }
+      }
+      
+      @OptIn(ExperimentalMaterial3Api::class)
+      @Composable
+      fun ClimaFlowApp(viewModel: MainViewModel = viewModel()) {
+          val uiState by viewModel.uiState.collectAsState()
+          val snackbarHostState = remember { SnackbarHostState() }
+      
+          LaunchedEffect(Unit) {
+              viewModel.snackbarMessage.collectLatest { message ->
+                  snackbarHostState.showSnackbar(
+                      message = message,
+                      duration = SnackbarDuration.Short
+                  )
+              }
+          }
+      
+          Scaffold(
+              snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+              topBar = {
+                  TopAppBar(
+                      title = { Text("ClimaFlow", fontWeight = FontWeight.Bold) },
+                      colors = TopAppBarDefaults.topAppBarColors(
+                          containerColor = MaterialTheme.colorScheme.primaryContainer,
+                          titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                      )
+                  )
+              }
+          ) { paddingValues ->
+              Box(
+                  modifier = Modifier
+                      .padding(paddingValues)
+                      .fillMaxSize()
+                      .background(Color(0xFFF5F7FA))
+              ) {
+                  when (val state = uiState) {
+                      is UiState.Loading -> {
+                          CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                      }
+                      is UiState.Error -> {
+                          Text(
+                              text = state.message,
+                              color = MaterialTheme.colorScheme.error,
+                              modifier = Modifier.align(Alignment.Center)
+                          )
+                      }
+                      is UiState.Success -> {
+                          DashboardScreen(
+                              locationName = state.locationName,
+                              temperature = state.reading.temperature,
+                              humidity = state.reading.humidity,
+                              co2 = state.reading.co2Level,
+                              onFeedbackClick = { type -> viewModel.sendFeedback(type) }
+                          )
+                      }
+                  }
+              }
+          }
+      }
+      
+      @Composable
+      fun DashboardScreen(
+          locationName: String,
+          temperature: Double,
+          humidity: Double,
+          co2: Double,
+          onFeedbackClick: (String) -> Unit
+      ) {
+          Column(
+              modifier = Modifier
+                  .fillMaxSize()
+                  .padding(20.dp),
+              horizontalAlignment = Alignment.CenterHorizontally
+          ) {
+              Text(
+                  text = "Локація",
+                  fontSize = 14.sp,
+                  color = Color.Gray
+              )
+              Text(
+                  text = locationName,
+                  fontSize = 28.sp,
+                  fontWeight = FontWeight.ExtraBold,
+                  color = Color(0xFF1E293B),
+                  modifier = Modifier.padding(bottom = 24.dp)
+              )
+      
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(16.dp)
+              ) {
+                  MetricCard(
+                      modifier = Modifier.weight(1f),
+                      title = "Температура",
+                      icon = "🌡️",
+                      value = "${temperature}°C",
+                      valueColor = if (temperature > 25 || temperature < 18) Color(0xFFE53935) else Color(0xFF43A047)
+                  )
+                  MetricCard(
+                      modifier = Modifier.weight(1f),
+                      title = "Вологість",
+                      icon = "💧",
+                      value = "${humidity}%",
+                      valueColor = Color(0xFF1E88E5)
+                  )
+              }
+              Spacer(modifier = Modifier.height(16.dp))
+      
+              val co2Color = if (co2 > 800) Color(0xFFE53935) else Color(0xFF43A047)
+              MetricCard(
+                  modifier = Modifier.fillMaxWidth(),
+                  title = "Якість повітря (CO₂)",
+                  icon = "??",
+                  value = "${co2} ppm",
+                  valueColor = co2Color
+              )
+      
+              AnimatedVisibility(visible = co2 > 800) {
+                  Card(
+                      colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE)),
+                      modifier = Modifier
+                          .fillMaxWidth()
+                          .padding(top = 16.dp),
+                      shape = RoundedCornerShape(12.dp)
+                  ) {
+                      Row(
+                          verticalAlignment = Alignment.CenterVertically,
+                          modifier = Modifier.padding(16.dp)
+                      ) {
+                          Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFE53935))
+                          Spacer(modifier = Modifier.width(12.dp))
+                          Text("Увага! Високий рівень CO₂. Система активує вентиляцію.", color = Color(0xFFC62828))
+                      }
+                  }
+              }
+      
+              Spacer(modifier = Modifier.weight(1f))
+      
+              Card(
+                  modifier = Modifier.fillMaxWidth(),
+                  colors = CardDefaults.cardColors(containerColor = Color.White),
+                  elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                  shape = RoundedCornerShape(20.dp)
+              ) {
+                  Column(
+                      modifier = Modifier.padding(20.dp),
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Text(
+                          text = "Оцініть комфорт у приміщенні",
+                          fontWeight = FontWeight.Bold,
+                          fontSize = 16.sp,
+                          color = Color(0xFF374151)
+                      )
+                      Text(
+                          text = "ШІ адаптує клімат під ваші вподобання",
+                          fontSize = 12.sp,
+                          color = Color.Gray,
+                          modifier = Modifier.padding(bottom = 16.dp)
+                      )
+      
+                      Row(
+                          modifier = Modifier.fillMaxWidth(),
+                          horizontalArrangement = Arrangement.SpaceBetween
+                      ) {
+                          FeedbackButton("Холодно", "🥶", Color(0xFFE3F2FD), Color(0xFF1E88E5)) { onFeedbackClick("COLD") }
+                          FeedbackButton("Комфортно", "👍", Color(0xFFE8F5E9), Color(0xFF43A047)) { onFeedbackClick("PERFECT") }
+                          FeedbackButton("Спекотно", "🥵", Color(0xFFFFEBEE), Color(0xFFE53935)) { onFeedbackClick("HOT") }
+                      }
+                  }
+              }
+          }
+      }
+      
+      @Composable
+      fun MetricCard(modifier: Modifier = Modifier, title: String, icon: String, value: String, valueColor: Color) {
+          Card(
+              modifier = modifier,
+              colors = CardDefaults.cardColors(containerColor = Color.White),
+              elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+              shape = RoundedCornerShape(20.dp)
+          ) {
+              Column(
+                  modifier = Modifier.padding(16.dp)
+              ) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                      Text(text = icon, fontSize = 20.sp)
+                      Spacer(modifier = Modifier.width(8.dp))
+                      Text(text = title, fontSize = 14.sp, color = Color.Gray)
+                  }
+                  Spacer(modifier = Modifier.height(12.dp))
+                  Text(
+                      text = value,
+                      fontSize = 24.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = valueColor
+                  )
+              }
+          }
+      }
+      
+      @Composable
+      fun RowScope.FeedbackButton(
+          text: String,
+          emoji: String,
+          bgColor: Color,
+          contentColor: Color,
+          onClick: () -> Unit
+      ) {
+          Button(
+              onClick = onClick,
+              colors = ButtonDefaults.buttonColors(containerColor = bgColor, contentColor = contentColor),
+              shape = RoundedCornerShape(16.dp),
+              contentPadding = PaddingValues(vertical = 12.dp),
+              modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+          ) {
+              Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                  Text(text = emoji, fontSize = 24.sp)
+                  Spacer(modifier = Modifier.height(4.dp))
+                  Text(text = text, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+              }
+          }
+      }
+     У точці входу програми (MainActivity.kt) реалізовано інтерфейс користувача (UI) з використанням сучасного декларативного фреймворку Jetpack Compose та компонентів Material Design 3. Замість традиційної XML-розмітки, інтерфейс описано Kotlin-функціями, позначеними анотацією @Composable (DashboardScreen, MetricCard, FeedbackButton). Функція ClimaFlowApp підписується на зміни стану з ViewModel за допомогою методу collectAsState(). Завдяки цьому механізму (Recomposition), як тільки сервер повертає нову температуру, Compose автоматично перемальовує лише ту картку на екрані, дані якої змінилися.
+     Екран містить компонент Scaffold для організації верхньої панелі та системи сповіщень (SnackbarHost), а також AnimatedVisibility для плавного виведення червоної картки попередження у разі перевищення норми CO₂.
+     
+     
+Рисунок 1.1 — Застосунок
+     
+     3.3. Взаємодія з іншими частинами системи
+     Застосунок працює у режимі "Тонкого клієнта". Мережева взаємодія відбувається за протоколом HTTP.
+1. Моніторинг: Раз на 5 секунд застосунок виконує фоновий GET-запит api/Users/{userId}/my-room для визначення локації користувача. Отримавши ID пристрою, виконується запит api/Readings/history/{deviceId} для отримання останніх показників клімату (температура, вологість, CO₂).
+2. Зворотній зв'язок (Feedback): При натисканні кнопок "Холодно", "Комфортно", "Спекотно", застосунок генерує DTO-об'єкт та відправляє POST-запит на ендпоінт api/Feedback. Сервер записує ці дані в MS SQL для подальшого аналізу алгоритмами машинного навчання, а застосунок показує спливаюче повідомлення (Snackbar) про успіх.
+     3.4. Діаграми
+     
+Рисунок 1.2 — UML-діаграма (Use Case) прецедентів
+
+
+
+Рисунок 1.3 — UML-діаграма компонентів
+
+
+
+
+Рисунок 1.4 — UML-діаграма пакетів
+
+
+
+
+Рисунок 1.5 — UML-діаграма діяльності
