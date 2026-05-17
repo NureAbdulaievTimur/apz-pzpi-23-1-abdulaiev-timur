@@ -1,0 +1,108 @@
+# 1. Обробка вебхуків (Python / FastAPI)
+from fastapi import FastAPI, Request, Header
+import hmac
+import hashlib
+
+app = FastAPI()
+TWITCH_SECRET = "your_secret_key_here"
+
+@app.post("/eventsub/callback")
+async def eventsub_handler(request: Request, 
+                           twitch_eventsub_message_signature: str = Header(None)):
+    
+    body = await request.body()
+    expected_signature = "sha256=" + hmac.new(
+        TWITCH_SECRET.encode(), body, hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected_signature, twitch_eventsub_message_signature):
+        return {"status": "403 Forbidden"}
+
+    data = await request.json()
+    
+    if data.get("subscription", {}).get("type") == "stream.online":
+        broadcaster = data["event"]["broadcaster_user_name"]
+        print(f"ПОДІЯ: Стрімер {broadcaster} щойно запустив трансляцію!")
+        
+    return {"status": "success"}
+
+
+// 2. Підключення до чату (JavaScript / Node.js)
+const WebSocket = require('ws');
+
+const ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+
+ws.on('open', function open() {
+    console.log('З\'єднання з Edge-сервером чату встановлено.');
+    
+    ws.send('PASS oauth:your_token_here');
+    ws.send('NICK justinfan12345'); 
+    
+    ws.send('JOIN #tarik');
+});
+
+ws.on('message', function incoming(data) {
+    const message = data.toString();
+    
+    if (message.includes('PRIVMSG')) {
+        const username = message.split('!')[0].substring(1);
+        const text = message.split('PRIVMSG')[1].split(':').slice(1).join(':').trim();
+        console.log(`[Чат] ${username}: ${text}`);
+    }
+    
+    if (message.startsWith('PING')) {
+        ws.send('PONG :tmi.twitch.tv');
+    }
+});
+
+
+# 3. Патерн кешування Redis (Python)
+import redis
+import json
+
+cache = redis.Redis(host='localhost', port=6379, db=0)
+
+def get_streamer_status(user_id):
+    cache_key = f"streamer_status:{user_id}"
+    
+    cached_data = cache.get(cache_key)
+    
+    if cached_data:
+        print("Отримано з Redis (Швидко)")
+        return json.loads(cached_data)
+        
+    print("Дані відсутні в кеші. Запит до бази даних...")
+    db_data = fetch_from_postgres(user_id)
+    
+    if db_data:
+        cache.setex(cache_key, 60, json.dumps(db_data))
+        
+    return db_data
+
+def fetch_from_postgres(user_id):
+    return {"is_live": True, "viewers": 15420, "category": "Valorant"}
+
+
+<!-- 4. Відтворення відео HLS (HTML / JavaScript) -->
+<video id="twitch-player" controls autoplay></video>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script>
+  const video = document.getElementById('twitch-player');
+  const streamUrl = 'https://video-edge-123.fra02.abs.hls.ttvnw.net/v1/playlist.m3u8';
+
+  if (Hls.isSupported()) {
+    const hls = new Hls({
+        maxBufferLength: 10,
+        liveSyncDurationCount: 2
+    });
+    
+    hls.loadSource(streamUrl);
+    hls.attachMedia(video);
+    
+    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+      console.log('Маніфест завантажено, починаємо відтворення...');
+      video.play();
+    });
+  }
+</script>
